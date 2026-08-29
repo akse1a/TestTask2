@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -322,5 +323,24 @@ func TestHealthz(t *testing.T) {
 	var m map[string]string
 	if err := json.Unmarshal(b, &m); err != nil || m["status"] != "ok" {
 		t.Fatalf("body = %s, want {\"status\":\"ok\"}", b)
+	}
+}
+
+// SPEC §2.1 — the Idempotency-Key limit is 255 *characters* (runes), not bytes.
+// A 200-rune Cyrillic key is 400 bytes; it must be accepted (regression test for
+// the bytes-vs-runes fix). A 256-rune key must be rejected.
+func TestIdempotencyKeyLengthCountsRunes(t *testing.T) {
+	srv := newServer(t)
+
+	okKey := strings.Repeat("к", 200) // 200 runes, 400 bytes
+	resp, body := post(t, srv.URL, okKey, `{"amount_minor":100,"currency":"RUB"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("200-rune key: status = %d, want 201 (body=%s)", resp.StatusCode, body)
+	}
+
+	tooLong := strings.Repeat("к", 256) // 256 runes
+	resp, body = post(t, srv.URL, tooLong, `{"amount_minor":100,"currency":"RUB"}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("256-rune key: status = %d, want 400 (body=%s)", resp.StatusCode, body)
 	}
 }

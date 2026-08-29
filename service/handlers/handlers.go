@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"unicode/utf8"
 
 	"paymentapi/apperr"
 	"paymentapi/store"
@@ -86,9 +87,11 @@ func (a *API) handleHealth(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (a *API) handleCreate(w http.ResponseWriter, r *http.Request) {
-	// Idempotency-Key is mandatory and bounded to 1..255 chars (SPEC §2.1).
+	// Idempotency-Key is mandatory and bounded to 1..255 characters, i.e. Unicode
+	// code points, not bytes (SPEC §2.1). RuneCountInString keeps a valid
+	// multi-byte key (>255 bytes but <=255 runes) from being wrongly rejected.
 	key := r.Header.Get("Idempotency-Key")
-	if key == "" || len(key) > 255 {
+	if key == "" || utf8.RuneCountInString(key) > 255 {
 		writeError(w, apperr.ErrMissingIdempotencyKey)
 		return
 	}

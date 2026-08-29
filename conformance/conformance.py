@@ -139,6 +139,22 @@ def run_suite(base):
     st, bm = req("DELETE", f"{base}/payments/{pid}")
     check("10. unsupported method -> 405", st == 405, f"got {st} (code={err_code(bm)})")
 
+    # 11. a full-length 255-char ASCII key is accepted (boundary, SPEC §2.1).
+    #     (The bytes-vs-runes fix for multi-byte keys is validated by a Go unit
+    #     test in service/handlers — non-latin-1 header values can't travel over
+    #     a real HTTP client, so it's not exercised here.)
+    st, bu = req("POST", f"{base}/payments", {"amount_minor": 100, "currency": "RUB"},
+                 {"Idempotency-Key": "a" * 255})
+    check("11. 255-char key accepted", st == 201, f"got {st} {bu}")
+
+    # 12. unknown route -> 404 with code from the fixed list (SPEC §4)
+    st, bn = req("GET", f"{base}/no-such-route")
+    fixed = {"missing_idempotency_key", "invalid_json", "invalid_amount",
+             "invalid_currency", "idempotency_key_reuse", "payment_not_found",
+             "method_not_allowed", "not_found", "internal_error"}
+    check("12. unknown route -> 404, code in fixed list", st == 404 and err_code(bn) in fixed,
+          f"got {st} code={err_code(bn)}")
+
 
 def main():
     if len(sys.argv) < 2:

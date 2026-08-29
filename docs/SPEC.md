@@ -99,9 +99,13 @@ canceled  → платёж отменён (терминальный)
 ```
 HTTP-статус соответствует таблице выше. `code` — из фиксированного списка:
 `missing_idempotency_key`, `invalid_json`, `invalid_amount`, `invalid_currency`,
-`idempotency_key_reuse`, `payment_not_found`, `method_not_allowed`, `internal_error`.
+`idempotency_key_reuse`, `payment_not_found`, `method_not_allowed`, `not_found`,
+`internal_error`.
 
 Неподдерживаемый метод на существующем пути → `405`, `method_not_allowed`.
+Неизвестный путь (не `/payments…` и не `/healthz`) → `404`, `not_found`
+(отличается от `payment_not_found`, который относится к отсутствующему платежу
+по существующему маршруту).
 
 ---
 
