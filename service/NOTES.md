@@ -41,7 +41,17 @@ Three clean layers, each in its own package:
   + wrong method → `405 method_not_allowed`; unknown path → `404`.
 - **Payments are returned by value** (copies) from the store, so a concurrent
   cancel can never race a reader holding a reference.
-- **IDs** are `pay_<hex>` from `crypto/rand` (12 bytes).
+- **Single source of truth**: an idempotency entry stores only the created
+  payment's *id*, never a copy of the payment. An idempotent replay
+  (`POST` with a seen key + same body) re-reads the live record, so it always
+  reflects the payment's current status — e.g. a replay after a cancel returns
+  `canceled`, not a snapshot frozen at creation time.
+- **IDs** are `pay_<hex>` from `crypto/rand` (12 bytes). A `crypto/rand` failure
+  is surfaced as `500 internal_error`, not masked by a predictable fallback id —
+  unguessability is a security property here.
+- **Graceful shutdown**: `main` shuts the server down on SIGINT/SIGTERM within a
+  5s drain window (`context` + `srv.Shutdown`), with a single testable `run()`
+  entry point.
 - Storage is in-memory; restart clears data — expected for v1.0 (SPEC §6).
 
 ## Idempotency-Key length
@@ -71,8 +81,7 @@ outside my worktree.
 - Unknown/extra body fields are ignored (allowed by SPEC §2.1, not rejected).
 - `Content-Type` of incoming requests is not enforced; only the body content is
   validated.
-- No graceful shutdown, no structured logging, no metrics — none required by the
-  spec.
+- No structured logging, no metrics — none required by the spec.
 
 ## Security limitations (v1.0, in-memory demo)
 

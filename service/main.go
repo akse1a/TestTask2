@@ -5,16 +5,32 @@
 package main
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"paymentapi/handlers"
 	"paymentapi/store"
 )
 
+const shutdownTimeout = 5 * time.Second
+
 func main() {
+	if err := run(); err != nil {
+		log.Fatalf("paymentapi: %v", err)
+	}
+}
+
+// run wires the server and blocks until a termination signal, then drains
+// in-flight requests within shutdownTimeout. It returns an error instead of
+// calling log.Fatal itself so the startup/shutdown path stays testable and has a
+// single exit point.
+func run() error {
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -35,8 +51,27 @@ func main() {
 		IdleTimeout:       60 * time.Second,
 	}
 
-	log.Printf("paymentapi listening on :%s", port)
-	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-		log.Fatalf("server error: %v", err)
+	// Cancel the context on SIGINT/SIGTERM to trigger a graceful shutdown.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	serveErr := make(chan error, 1)
+	go func() {
+		log.Printf("paymentapi listening on :%s", port)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			serveErr <- err
+			return
+		}
+		serveErr <- nil
+	}()
+
+	select {
+	case err := <-serveErr:
+		return err
+	case <-ctx.Done():
+		log.Println("paymentapi: shutting down")
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		return srv.Shutdown(shutdownCtx)
 	}
 }

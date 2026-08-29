@@ -115,7 +115,7 @@ func (a *API) handleCreate(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) handleGet(w http.ResponseWriter, _ *http.Request, id string) {
-	p, err := a.store.GetPayment(id)
+	p, _, err := a.store.GetPayment(id)
 	if err != nil {
 		writeError(w, err)
 		return

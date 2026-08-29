@@ -8,6 +8,10 @@
 //     one of them creates the payment and every other caller observes the
 //     already-created result. This is the cooperation point the "breaker" agent
 //     probes: two simultaneous identical POSTs create exactly one payment.
+//
+// The payments map is the single source of truth: an idempotency entry records
+// only the created payment's id, never a copy of it, so an idempotent replay
+// always reflects the payment's current state (including a later cancel).
 package store
 
 import (
@@ -45,12 +49,14 @@ type fingerprint struct {
 }
 
 // idemEntry is the reservation slot for one idempotency key. Its mutex
-// serializes creators for that key; once done is true, pay/fp are immutable.
+// serializes creators for that key; once done is true, fp and id are immutable.
+// It intentionally holds only the payment id, not the Payment itself, so there
+// is one authoritative copy of every payment (in Store.payments).
 type idemEntry struct {
 	mu   sync.Mutex
 	done bool
 	fp   fingerprint
-	pay  Payment
+	id   string
 }
 
 // Store holds all payments in memory.
@@ -88,6 +94,9 @@ func (s *Store) getOrCreateEntry(key string) *idemEntry {
 // previously created one. The boolean reports whether a new payment was created
 // (true → HTTP 201, false → HTTP 200). A reuse of the key with a different body
 // yields apperr.ErrIdempotencyKeyReuse (HTTP 409) and creates nothing.
+//
+// Lock order is always entry.mu ⊃ s.mu; cancel/get take s.mu alone, so the two
+// paths cannot deadlock.
 func (s *Store) CreatePayment(key string, amount int64, currency string) (Payment, bool, error) {
 	entry := s.getOrCreateEntry(key)
 
@@ -102,12 +111,19 @@ func (s *Store) CreatePayment(key string, amount int64, currency string) (Paymen
 		if entry.fp != fp {
 			return Payment{}, false, apperr.ErrIdempotencyKeyReuse
 		}
-		return entry.pay, false, nil
+		// Replay against the live record, not a frozen snapshot, so a repeated
+		// create always mirrors the payment's current status.
+		return s.GetPayment(entry.id)
+	}
+
+	id, err := newID()
+	if err != nil {
+		return Payment{}, false, apperr.ErrInternal
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	p := &Payment{
-		ID:             newID(),
+		ID:             id,
 		AmountMinor:    amount,
 		Currency:       currency,
 		Status:         StatusCreated,
@@ -117,26 +133,27 @@ func (s *Store) CreatePayment(key string, amount int64, currency string) (Paymen
 	}
 
 	s.mu.Lock()
-	s.payments[p.ID] = p
+	s.payments[id] = p
 	s.mu.Unlock()
 
-	entry.pay = *p
 	entry.fp = fp
+	entry.id = id
 	entry.done = true
 
 	return *p, true, nil
 }
 
 // GetPayment returns a copy of the payment with the given id, or
-// apperr.ErrPaymentNotFound.
-func (s *Store) GetPayment(id string) (Payment, error) {
+// apperr.ErrPaymentNotFound. The returned bool is always false (no creation),
+// which lets CreatePayment's replay path forward this result verbatim.
+func (s *Store) GetPayment(id string) (Payment, bool, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	p, ok := s.payments[id]
 	if !ok {
-		return Payment{}, apperr.ErrPaymentNotFound
+		return Payment{}, false, apperr.ErrPaymentNotFound
 	}
-	return *p, nil
+	return *p, false, nil
 }
 
 // CancelPayment cancels the payment (SPEC §2.3). A created payment transitions
@@ -157,13 +174,14 @@ func (s *Store) CancelPayment(id string) (Payment, error) {
 	return *p, nil
 }
 
-// newID returns a unique, unpredictable payment id like "pay_<hex>".
-func newID() string {
+// newID returns a unique, unpredictable payment id like "pay_<hex>". A
+// crypto/rand failure is surfaced as an error rather than masked by a
+// predictable fallback: an unguessable id is a security property here, so a
+// degraded id would be worse than a clean 500.
+func newID() (string, error) {
 	b := make([]byte, 12)
 	if _, err := rand.Read(b); err != nil {
-		// crypto/rand failure is effectively impossible on supported platforms;
-		// fall back to a timestamp so we never emit an empty id.
-		return "pay_" + hex.EncodeToString([]byte(time.Now().UTC().String()))
+		return "", err
 	}
-	return "pay_" + hex.EncodeToString(b)
+	return "pay_" + hex.EncodeToString(b), nil
 }
