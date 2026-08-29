@@ -344,3 +344,137 @@ func TestIdempotencyKeyLengthCountsRunes(t *testing.T) {
 		t.Fatalf("256-rune key: status = %d, want 400 (body=%s)", resp.StatusCode, body)
 	}
 }
+
+// SPEC §4 — an unknown route (neither /payments… nor /healthz) → 404 with code
+// not_found, which is deliberately distinct from payment_not_found (the latter is
+// reserved for a missing payment on an existing route).
+func TestUnknownRouteNotFound(t *testing.T) {
+	srv := newServer(t)
+	req, _ := http.NewRequest(http.MethodGet, srv.URL+"/nope", nil)
+	r, b := do(t, req)
+	if r.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 (body=%s)", r.StatusCode, b)
+	}
+	if code := decodeErr(t, b).Error.Code; code != "not_found" {
+		t.Fatalf("code = %q, want not_found", code)
+	}
+}
+
+// SPEC §4 — 405 method_not_allowed applies to every known path, not just
+// /payments. Covers the remaining router branches: healthz, GET-only /payments/{id},
+// and POST-only /payments/{id}/cancel.
+func TestMethodNotAllowedAllPaths(t *testing.T) {
+	srv := newServer(t)
+	// Seed one payment so /payments/{id} and .../cancel resolve to a real id.
+	_, b := post(t, srv.URL, "key-405", `{"amount_minor":100,"currency":"RUB"}`)
+	id := decodePayment(t, b).ID
+
+	cases := []struct {
+		name, method, path string
+	}{
+		{"healthz non-GET", http.MethodPost, "/healthz"},
+		{"get payment non-GET", http.MethodDelete, "/payments/" + id},
+		{"cancel non-POST", http.MethodGet, "/payments/" + id + "/cancel"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(tc.method, srv.URL+tc.path, nil)
+			r, rb := do(t, req)
+			if r.StatusCode != http.StatusMethodNotAllowed {
+				t.Fatalf("status = %d, want 405 (body=%s)", r.StatusCode, rb)
+			}
+			if code := decodeErr(t, rb).Error.Code; code != "method_not_allowed" {
+				t.Fatalf("code = %q, want method_not_allowed", code)
+			}
+		})
+	}
+}
+
+// The router's dead-end branches under /payments/ — an empty id, an empty id
+// before /cancel, and a nested path — are not defined resources. SPEC does not
+// pin the exact code here (§4 fixes not_found for non-/payments paths and
+// payment_not_found for a missing payment on an existing route; a nested/empty id
+// falls cleanly under neither), so this asserts only the contract-safe invariant
+// that every implementation must share: a 404 with one of the two not-found codes,
+// never a 405, a 5xx, or a panic. Kept deliberately loose so the suite stays valid
+// across independent implementations, not tied to this one's routing choice.
+func TestPaymentsDeadEndRoutes(t *testing.T) {
+	srv := newServer(t)
+	cases := []struct{ name, method, path string }{
+		{"empty id", http.MethodGet, "/payments/"},
+		{"nested path", http.MethodGet, "/payments/abc/def"},
+		{"cancel empty id", http.MethodPost, "/payments//cancel"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req, _ := http.NewRequest(tc.method, srv.URL+tc.path, nil)
+			r, rb := do(t, req)
+			if r.StatusCode != http.StatusNotFound {
+				t.Fatalf("status = %d, want 404 (body=%s)", r.StatusCode, rb)
+			}
+			if code := decodeErr(t, rb).Error.Code; code != "payment_not_found" && code != "not_found" {
+				t.Fatalf("code = %q, want payment_not_found or not_found", code)
+			}
+		})
+	}
+}
+
+// SPEC §2.1/§5 — the sharper concurrency case: N goroutines hit the same
+// Idempotency-Key but split across two different bodies. Exactly one payment must
+// be created; every caller whose body matches the winner gets 200 with that id,
+// and every caller with the other body gets 409 idempotency_key_reuse. Run with
+// -race. This probes the create-vs-reuse-conflict boundary that the same-body
+// test cannot reach.
+func TestConcurrentSameKeyDifferentBodyCreatesOnePayment(t *testing.T) {
+	srv := newServer(t)
+	const n = 64
+	const key = "concurrent-mixed-key"
+	bodyA := `{"amount_minor":100,"currency":"RUB"}`
+	bodyB := `{"amount_minor":200,"currency":"RUB"}`
+
+	var wg sync.WaitGroup
+	var mu sync.Mutex
+	ids := map[string]struct{}{}
+	statusCount := map[int]int{}
+
+	start := make(chan struct{})
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		body := bodyA
+		if i%2 == 1 {
+			body = bodyB
+		}
+		go func(body string) {
+			defer wg.Done()
+			<-start
+			r, b := post(t, srv.URL, key, body)
+			mu.Lock()
+			statusCount[r.StatusCode]++
+			if r.StatusCode == http.StatusOK || r.StatusCode == http.StatusCreated {
+				ids[decodePayment(t, b).ID] = struct{}{}
+			}
+			mu.Unlock()
+		}(body)
+	}
+	close(start)
+	wg.Wait()
+
+	if len(ids) != 1 {
+		t.Fatalf("got %d distinct ids, want exactly 1: %v", len(ids), ids)
+	}
+	if statusCount[http.StatusCreated] != 1 {
+		t.Fatalf("got %d 201 responses, want exactly 1 (counts=%v)", statusCount[http.StatusCreated], statusCount)
+	}
+	// The winning body accounts for its 201 plus (n/2 - 1) replays at 200; the
+	// losing body's n/2 callers all get 409. Which body wins is nondeterministic,
+	// so assert the invariant that holds either way.
+	if got := statusCount[http.StatusOK] + statusCount[http.StatusConflict]; got != n-1 {
+		t.Fatalf("200+409 = %d, want %d (counts=%v)", got, n-1, statusCount)
+	}
+	if statusCount[http.StatusOK] != n/2-1 {
+		t.Fatalf("got %d 200 responses, want %d (counts=%v)", statusCount[http.StatusOK], n/2-1, statusCount)
+	}
+	if statusCount[http.StatusConflict] != n/2 {
+		t.Fatalf("got %d 409 responses, want %d (counts=%v)", statusCount[http.StatusConflict], n/2, statusCount)
+	}
+}
