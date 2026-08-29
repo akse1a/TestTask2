@@ -1,0 +1,20 @@
+# secrets — никогда не коммитим
+.env
+.env.*
+*.key
+*.pem
+settings.json
+.claude/settings.local.json
+
+# go
+*.exe
+*.test
+*.out
+/bin/
+
+# python venv для PDF-конвейера
+.venv/
+__pycache__/
+
+# сборочный мусор
+/reports/*.tmp
