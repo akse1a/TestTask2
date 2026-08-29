@@ -68,11 +68,28 @@ outside my worktree.
 ## What is NOT done / known weaknesses
 
 - No `captured` status — reserved in SPEC §3, deliberately out of scope for v1.0.
-- The per-key `idemEntry` map grows unbounded (one small entry per distinct key,
-  never freed). Fine for the exercise / in-memory lifetime; a production version
-  would need TTL/eviction.
-- No request timeouts beyond `ReadHeaderTimeout`; no graceful shutdown, no
-  structured logging, no metrics — none required by the spec.
 - Unknown/extra body fields are ignored (allowed by SPEC §2.1, not rejected).
 - `Content-Type` of incoming requests is not enforced; only the body content is
   validated.
+- No graceful shutdown, no structured logging, no metrics — none required by the
+  spec.
+
+## Security limitations (v1.0, in-memory demo)
+
+None of these are exploitable code bugs; they are conscious scope boundaries of a
+v1.0 in-memory demo. Listed explicitly so the threat surface is on the record.
+
+- **No authentication / authorization.** Every endpoint is open. Anyone who knows
+  a payment `id` can read (`GET`) or `cancel` it — a classic IDOR — since there is
+  no notion of an owner. This is **mitigated** (not solved) by IDs being 96 bits
+  from `crypto/rand`, which makes enumeration infeasible, but a production version
+  needs real authz tied to a caller identity.
+- **Unbounded memory → DoS.** Both the `payments` map and the per-key `idemEntry`
+  map grow without eviction/TTL: a stream of requests with unique
+  `Idempotency-Key`s grows memory without bound. The 1 MiB body cap limits per-request
+  size but not the number of retained entries. Production needs TTL/eviction and
+  rate limiting.
+- **No rate limiting.** Compounds the DoS surface above; out of scope for v1.0.
+- **Server timeouts** (`Read`/`Write`/`Idle`, added alongside `ReadHeaderTimeout`)
+  bound how long one connection can hold a goroutine, closing the basic Slowloris
+  vector.

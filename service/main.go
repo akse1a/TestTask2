@@ -22,10 +22,17 @@ func main() {
 
 	api := handlers.New(store.New())
 
+	// Timeouts bound how long a single connection may tie up a goroutine, so a
+	// slow or stalled client (Slowloris-style, on headers or body) cannot hold
+	// resources indefinitely. ReadHeaderTimeout guards the header phase;
+	// Read/Write/Idle bound the body, response, and keep-alive phases.
 	srv := &http.Server{
 		Addr:              ":" + port,
 		Handler:           api,
 		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      10 * time.Second,
+		IdleTimeout:       60 * time.Second,
 	}
 
 	log.Printf("paymentapi listening on :%s", port)
