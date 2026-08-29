@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<title>Отчёт по ДЗ №2 · Платёжный мини-API</title>
+<style>
+  :root { --accent: #1f6feb; --ink:#1a1d21; --muted:#5c6470; --line:#e3e6ea; }
+  * { box-sizing: border-box; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: Georgia, "Times New Roman", serif; color: var(--ink);
+         font-size: 10.5pt; line-height: 1.5; margin: 0; }
+  h1,h2,h3,h4 { font-family: "Helvetica Neue", Arial, sans-serif; line-height:1.25;
+         color: var(--ink); }
+  h2 { font-size: 15pt; margin: 22px 0 8px; padding-bottom:4px;
+        border-bottom: 2px solid var(--accent); }
+  h3 { font-size: 12pt; margin: 16px 0 6px; color:#2b3038; }
+  h4 { font-size: 10.5pt; margin: 12px 0 4px; }
+  p { margin: 6px 0; }
+  ul,ol { margin: 6px 0 6px 18px; padding:0; }
+  li { margin: 2px 0; }
+  code { font-family: "SFMono-Regular", Consolas, monospace; font-size: 9pt;
+          background:#f2f4f7; padding:1px 4px; border-radius:3px; }
+  hr { border:0; border-top:1px solid var(--line); margin: 16px 0; }
+  a { color: var(--accent); text-decoration: none; }
+  table { border-collapse: collapse; width:100%; margin:10px 0; font-size:9.2pt;
+           font-family:"Helvetica Neue", Arial, sans-serif; }
+  th { background: var(--accent); color:#fff; text-align:left; padding:5px 8px;
+        font-weight:600; }
+  td { border-bottom:1px solid var(--line); padding:5px 8px; vertical-align:top; }
+  tr:nth-child(even) td { background:#f7f9fb; }
+  .badge { font-family:"Helvetica Neue",Arial,sans-serif; font-size:8pt; font-weight:700;
+            padding:1px 7px; border-radius:10px; color:#fff; white-space:nowrap; }
+  .badge.ok { background:#1a7f37; }
+  .badge.warn { background:#9a6700; }
+  .badge.no { background:#8a8f98; }
+  /* Титул */
+  .cover { height: 251mm; display:flex; flex-direction:column; justify-content:center;
+            page-break-after: always; }
+  .cover .kicker { font-family:"Helvetica Neue",Arial,sans-serif; letter-spacing:2px;
+            text-transform:uppercase; color:var(--accent); font-size:10pt; font-weight:700; }
+  .cover h1 { font-family:"Helvetica Neue",Arial,sans-serif; font-size:30pt; margin:10px 0 6px;
+            line-height:1.1; }
+  .cover .sub { color:var(--muted); font-size:13pt; }
+  .cover .meta { margin-top:28px; font-family:"Helvetica Neue",Arial,sans-serif; font-size:10.5pt;
+            color:#2b3038; }
+  .cover .rule { width:64px; height:4px; background:var(--accent); margin:18px 0; }
+  /* Оглавление */
+  .toc { page-break-after: always; }
+  .toc h2 { border:0; }
+  .toc ol { font-family:"Helvetica Neue",Arial,sans-serif; font-size:11pt; list-style:none;
+             margin-left:0; }
+  .toc li { padding:5px 0; border-bottom:1px dotted var(--line); }
+  h2 { page-break-after: avoid; }
+  table, ul, ol { page-break-inside: avoid; }
+</style></head>
+<body>
+  <section class="cover">
+    <div class="kicker">Домашнее задание №2 · Финтех</div>
+    <h1>Платёжный мини-API<br>с идемпотентностью</h1>
+    <div class="rule"></div>
+    <div class="sub">Вариант C1 · собрано несколькими агентами по спецификации</div>
+    <div class="meta">
+      Автор: Elnar Aksaitov &nbsp;·&nbsp; Формат: соло<br>
+      Дата: 29 августа 2026 &nbsp;·&nbsp; Стек: Go (стандартная библиотека)
+    </div>
+  </section>
+  <section class="toc">
+    <h2>Оглавление</h2>
+    <ol><li><a href="#h2">Резюме (полстраницы)</a></li><li><a href="#h3">Обязательная часть</a></li><li><a href="#h8">Необязательная часть</a></li><li><a href="#h14">Что не сработало / трение (честно)</a></li><li><a href="#h15">Ссылки на артефакты</a></li></ol>
+  </section>
+  <main>
+  <h1 id="h1">Отчёт по ДЗ №2</h1>
+<p><strong>Вариант:</strong> C1 — платёжный мини-API с идемпотентностью. <strong>Формат:</strong> соло. <strong>Дата:</strong> 29 августа 2026. <strong>Стек:</strong> Go (стандартная библиотека), без внешних зависимостей.</p>
+<p>Отчёт устроен по пунктам задания. Где что-то не сработало или не делалось — сказано прямо; это осознанно, а не забыто.</p>
+<hr>
+<h2 id="h2">Резюме (полстраницы)</h2>
+<p>Собран рабочий платёжный HTTP-сервис: создать платёж, повторить с тем же ключом идемпотентности, получить статус, отменить. Идемпотентность и потокобезопасность — центральное требование контракта — реализованы и <strong>проверены под нагрузкой</strong> (100 параллельных запросов с одним ключом дают ровно один платёж).</p>
+<p>Работа шла по повторяемому workflow: сначала спецификация контракта, затем <strong>три субагента параллельно</strong> написали три независимые реализации в трёх git worktree, каждая со своей моделью конкурентности. Объективный чёрно-ящичный conformance-набор (27 проверок по HTTP) прошёл на всех трёх — <strong>25/25</strong> на момент выбора. Выбрана самая пригодная к сопровождению (слоистая, impl-b), смержена в <code>main</code>. Затем <strong>отдельный агент-ломатель</strong> (не автор кода) 61 сценарием пытался сервис сломать: реальных багов не нашёл, но выявил 2 minor-несоответствия текста спеки — оба исправлены и покрыты тестами, conformance расширен до <strong>27/27</strong>.</p>
+<p>Главный измеренный эффект параллельности — не столько время (хотя здесь и оно: 489 c против ~1175 c оценочно), сколько <strong>контекст</strong>: 225 K токенов работы с кодом остались в контекстах субагентов и не попали в главную сессию.</p>
+<hr>
+<h2 id="h3">Обязательная часть</h2>
+<h3 id="h4">1. Работающий результат — <span class="badge ok">выполнено</span></h3>
+<ul><li>Сервис в <code>service/</code>, запускается <code>go run .</code> (или <code>CGO_ENABLED=0 go run .</code>), инструкция — в <code>README.md</code>. Эндпоинты, коды ошибок и статусы — по <code>docs/SPEC.md</code>.</li><li>Тесты: <code>go test -race ./...</code> зелёные (юнит + конкурентные); общий conformance — <code>python3 conformance/conformance.py service</code> → <strong>27/27</strong>.</li><li>Хранилище in-memory (перезапуск обнуляет) — так и задумано для v1.0, отмечено в спеке.</li></ul>
+<h3 id="h5">2. Агенты — <span class="badge ok">выполнено</span></h3>
+<ul><li>Три субагента запущены <strong>параллельно, в одной сессии</strong>, каждому выдан свой git worktree (<code>impl-a/b/c</code>) и своя «дизайн-полоса», чтобы реализации отличались:</li><li>A — один <code>sync.Mutex</code> + map (простейшая корректность);</li><li>B — слои <code>store</code>/<code>handlers</code>/<code>apperr</code>, <code>RWMutex</code> + резервирование ключа;</li><li>C — <code>sync.Map</code> + атомарный <code>LoadOrStore</code>, хеш нормализованного тела.</li><li>Четвёртый агент — <strong>ломатель</strong>, в отдельной сессии, не автор кода.</li><li>Следы видны: ветки <code>impl-*</code> в истории, коммиты merge, журнал сессий с дословными промптами в <code>sessions/</code>, отчёты агентов в <code>reports/</code>.</li><li>Замер параллельно/последовательно — <code>reports/measurement.md</code> (см. честную оговорку там).</li></ul>
+<h3 id="h6">3. Workflow — <span class="badge ok">выполнено</span></h3>
+<ul><li><code>workflows/spec-parallel-build.md</code> — процедура «спека → веер реализаций → ломатель → сведение», каждый шаг оставляет файл-артефакт. <code>workflows/PROMPT.txt</code> — готовый промпт для повторного запуска на любом контракте. Именно этой процедурой и собран весь проект.</li></ul>
+<h3 id="h7">PDF — <span class="badge ok">выполнено</span></h3>
+<ul><li>Этот отчёт собран в <code>reports/report.pdf</code> (HTML + печатная CSS через headless Chrome: титул, оглавление, один акцентный цвет, таблицы, колонтитулы с номерами страниц).</li></ul>
+<hr>
+<h2 id="h8">Необязательная часть</h2>
+<h3 id="h9">git worktrees — <span class="badge ok">выполнено</span></h3>
+<p>Три ветки создавались как реальные worktree (<code>git worktree add</code>), в каждой работал свой агент; лучшая (<code>impl-b</code>) смержена в <code>main</code> через <code>--no-ff</code>. Ветки <code>impl-a</code>/<code>impl-c</code> сохранены в истории как альтернативы. Worktree после сведения удалены (<code>git worktree remove</code> + <code>prune</code>) — за диском следил, как советовали на занятии.</p>
+<h3 id="h10">Агент-ломатель — <span class="badge ok">выполнено</span></h3>
+<p>61 сценарий, отчёт <code>reports/breaker.md</code>. Реальных багов 0; 2 minor-несоответствия исправлены. Отдельная сессия, не автор кода — как и требовалось.</p>
+<h3 id="h11">Замер параллельно/последовательно — <span class="badge warn">частично</span></h3>
+<p>Параллельный прогон измерен реально; полный последовательный — <strong>не гонял</strong> (стоил бы ещё ~20 мин и ~225 K токенов в главную сессию ради числа, выводимого из длительностей). Последовательная колонка в <code>reports/measurement.md</code> — честная оценка, а не факт.</p>
+<h3 id="h12">Журнал сессий — <span class="badge ok">выполнено</span></h3>
+<p><code>sessions/</code> — дословные промпты всех агентов и ключевые решения.</p>
+<h3 id="h13">Что НЕ делал (осознанно)</h3>
+<ul><li><strong>Изоляция с доказанным отказом</strong> (песочница/контейнер) — не делал. Причина: go-сборка на этой машине и так конфликтует со встроенной песочницей Bash (см. ниже), а полноценный Docker-демонстратор выходил за рамки времени. Отдельного «вывода неудачной попытки» нет.</li><li><strong>Инъекция на двух моделях</strong> — не делал. Вариант C1 не про недоверенный текст; подкладывать инъекцию в платёжный JSON искусственно не стал.</li><li><strong>Оптимизатор контекста / индекс кодовой базы</strong> — не ставил. Проект маленький, эффект был бы незаметен; ставить сторонние хуки ради галочки не хотелось.</li></ul>
+<hr>
+<h2 id="h14">Что не сработало / трение (честно)</h2>
+<ol><li><strong>Тулчейн Go на машине настроен под кросс-компиляцию.</strong> <code>go env CC</code> указывал на <code>x86_64-w64-mingw32-gcc</code> (Windows), из-за чего <code>go test -race</code> (нужен cgo) не собирался с дефолтным компилятором. Все три агента-реализатора независимо на это наткнулись; один (B) поправил глобально <code>go env -w CC=gcc</code>. Сервис на чистой стандартной библиотеке, cgo ему не нужен — гоняется с <code>CGO_ENABLED=0</code>.</li><li><strong>Встроенная песочница Bash мешает go.</strong> Спавнящийся из go компилятор не мог читать <code>/usr/include</code>; сборку/тесты приходилось запускать с отключённой песочницей. Ровно тот случай из материалов: песочница накрывает Bash и его дочерние процессы.</li><li><strong>PDF-конвейер пришлось выбирать под окружение.</strong> <code>pip</code>/<code>venv</code> недоступны (нет <code>ensurepip</code>), weasyprint не поставить. Зато в системе есть Google Chrome — собрал PDF через него (<code>puppeteer-core</code> + системный Chrome, без скачивания браузера).</li><li><strong>Замер последовательного прогона не доведён до факта</strong> — см. выше.</li></ol>
+<p>Ни один из пунктов не блокировал результат, но каждый стоил времени — и это ровно те «грабли окружения», ради которых задание и просит попробовать руками.</p>
+<hr>
+<h2 id="h15">Ссылки на артефакты</h2>
+<table><thead><tr><th>Файл</th><th>Что</th></tr></thead><tbody><tr><td><code>service/</code></td><td>реализация API (Go)</td></tr><tr><td><code>docs/SPEC.md</code></td><td>контракт v1.0</td></tr><tr><td><code>conformance/conformance.py</code></td><td>27 чёрно-ящичных проверок</td></tr><tr><td><code>workflows/spec-parallel-build.md</code>, <code>PROMPT.txt</code></td><td>workflow</td></tr><tr><td><code>reports/comparison.md</code></td><td>сравнение трёх реализаций</td></tr><tr><td><code>reports/breaker.md</code></td><td>отчёт агента-ломателя (61 сценарий)</td></tr><tr><td><code>reports/measurement.md</code></td><td>замер параллельно/последовательно</td></tr><tr><td><code>sessions/</code></td><td>журнал сессий с дословными промптами</td></tr></tbody></table>
+  </main>
+</body></html>
